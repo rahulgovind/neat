@@ -6,6 +6,7 @@ from numpy.random import choice
 
 import logging
 from network import Network
+import matplotlib.pyplot as plt
 
 class Pool(object):
     def __init__(self, population):
@@ -15,6 +16,7 @@ class Pool(object):
         self.population = population
         self.species = []
         self.generation = 0
+        self.fitness = []
 
         genome = Genome(self.new_innovation)
         genome.set_basic()
@@ -60,7 +62,8 @@ class Pool(object):
     def remove_stale_species(self):
         survived = []
 
-        logging.debug("remove stale species: %d" % len(self.species))
+        initial_count = len(self.species)
+        logging.debug("Remove stale species: %d" % len(self.species))
         for specie in self.species:
             specie.genomes.sort(key=lambda x: -x.fitness)
             if specie.genomes[0].fitness > specie.top_fitness:
@@ -72,6 +75,7 @@ class Pool(object):
             if specie.staleness < MAX_STALENESS or specie.top_fitness >= self.max_fitness:
                 survived.append(specie)
         self.species = survived
+        logging.debug("%d Stale species removed" % (initial_count - len(self.species)))
 
     def total_average_fitness(self):
         self.rank_globally()
@@ -96,14 +100,12 @@ class Pool(object):
     def evaluate_fitness(self):
         for specie in self.species:
             specie.evaluate_fitness()
-
-        logging.debug(len(self.species))
         self.max_fitness = max(self.species, key=lambda x: x.max_fitness).max_fitness
 
     def evolve(self, max_gen = 100):
         for gen in range(max_gen):
             logging.info("Starting generation %d" % (gen+1))
-
+            logging.info("No. of species %d" % len(self.species))
             self.evaluate_fitness()
 
             logging.info("Culling half of each species")
@@ -125,10 +127,6 @@ class Pool(object):
                 for i in range(breed):
                     children.append(specie.breed_child())
 
-            logging.info("Culling to one")
-            for specie in self.species:
-                specie.cull_species(True)
-
             logging.info("Generating more crossovers to reach population")
             while len(children) + len(self.species) < self.population:
                 specie = self.species[choice(len(self.species))]
@@ -137,17 +135,31 @@ class Pool(object):
             for child in children:
                 self.add_to_species(child)
 
-            logging.info("Max fitness %d" % self.max_fitness)
+            logging.info("Max fitness %f" % self.max_fitness)
+            self.fitness.append(self.max_fitness)
             logging.info("Generation %d done" % (gen+1))
 
-        genomes = self.get_all_genomes()
-
         logging.info("OUTPUT")
+        genomes = self.get_all_genomes()
         network = Network(max(genomes, key=lambda x: x.fitness))
         for i in range(2):
             for j in range(2):
-                for k in range(2):
-                    for l in range(2):
-                        logging.info("%d ^ %d ^ %d ^ %d= %d" % (i, j, k, l, network.evaluate([i,j,k,l,1])[0]))
+                logging.info("%d ^ %d = %f" % (i, j, network.evaluate([i,j,1])[0]))
 
-        max(genomes, key=lambda x: x.fitness).draw()
+    def plot_fitness(self, fitness_transform=None, ylabel=None):
+
+        if fitness_transform is not None:
+            y = [fitness_transform(x) for x in self.fitness]
+        else:
+            y = self.fitness
+
+        plt.plot(range(1, len(y) + 1), y)
+        plt.xlabel('Generation')
+        if ylabel is not None:
+            plt.ylabel(ylabel)
+        plt.show()
+
+    def draw_final_network(self):
+        genomes = self.get_all_genomes()
+        genomes.sort(key=lambda x: x.fitness)
+        genomes[0].network().draw()

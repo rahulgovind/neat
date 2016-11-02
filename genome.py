@@ -6,14 +6,15 @@ from numpy.random import choice
 from network import Network
 import networkx as nx
 import matplotlib.pyplot as plt
+import logging
+
 
 def pcount(x):
-    result = 0
-    while x>0:
-        if random() < x:
-            result += 1
-        x -= 1
-    return result
+    if random() < x:
+        return 1
+    else:
+        return 0
+
 
 
 class Genome(object):
@@ -44,9 +45,11 @@ class Genome(object):
         return result
 
     def set_basic(self):
+        self.genes.append(Gene(enabled=True, weight=uniform(-1, 1), in_node=INPUT_SIZE,
+                               out_node=MAX_NODES+1, innovation=self.get_global_innovation()))
         for i in range(1, INPUT_SIZE+1):
             for j in range(1, OUTPUT_SIZE+1):
-                self.genes.append(Gene(enabled=True, weight=uniform(-2,2), in_node=i,
+                self.genes.append(Gene(enabled=True, weight=uniform(-1,1), in_node=i,
                                        out_node=MAX_NODES+j, innovation=self.get_global_innovation()))
         return self
 
@@ -64,13 +67,25 @@ class Genome(object):
         for gene in g2.genes:
             innovation_map[gene.innovation] = gene
 
-        for gene in g1.genes:
-            if gene.innovation in innovation_map:
-                if random > 0.5:
-                    child.genes.append(gene.copy())
+        if g1.fitness != g2.fitness:
+            for gene in g1.genes:
+                if gene.innovation in innovation_map:
+                    if random > 0.5:
+                        child.genes.append(gene.copy())
+                    else:
+                        child.genes.append(innovation_map[gene.innovation].copy())
                 else:
-                    child.genes.append(innovation_map[gene.innovation].copy())
-            else:
+                    child.genes.append(gene.copy())
+        else:
+            genes_to_copy = []
+            for gene in g1.genes:
+                if gene.innovation in innovation_map or random() > 0.5:
+                    genes_to_copy.append(gene)
+            for gene in g2.genes:
+                if gene not in genes_to_copy:
+                    if random() > 0.5:
+                        genes_to_copy.append(gene)
+            for gene in genes_to_copy:
                 child.genes.append(gene.copy())
 
         child.max_neuron = max(g1.max_neuron, g2.max_neuron)
@@ -87,7 +102,7 @@ class Genome(object):
             if random() < PERTURB_CHANCE:
                 gene.weight = gene.weight + uniform(-step, step)
             else:
-                gene.weight = uniform(-2, 2)
+                gene.weight = uniform(-1, 1)
 
     def enable_disable_mutate(self, enable):
         candidates = []
@@ -98,6 +113,12 @@ class Genome(object):
         if candidates:
             candidates[choice(len(candidates))].enabled = enable
 
+    def node_exists(self, key):
+        for gene in self.genes:
+            if gene.into == key or gene.out == key:
+                return True
+            return False
+
     def node_mutate(self):
         if not self.genes:
             return
@@ -107,11 +128,24 @@ class Genome(object):
             return
 
         gene.enabled = False
+
+        if gene.into == gene.out:
+            logging.debug(gene.into)
+            logging.debug(gene.out)
+            logging.debug(gene.innovation)
+            assert False
+
+        new_gene_key = (gene.into + gene.out)/2
+
+        while self.node_exists(new_gene_key):
+            new_gene_key = uniform(gene.into, gene.out)
+
         self.max_neuron += 1
+        new_gene_key = self.max_neuron
 
         gene1 = Gene(enabled=True, weight=1.0, in_node=gene.into,
-                     out_node=self.max_neuron, innovation=self.get_global_innovation())
-        gene2 = Gene(enabled=True, weight=gene.weight, in_node=self.max_neuron,
+                     out_node=new_gene_key, innovation=self.get_global_innovation())
+        gene2 = Gene(enabled=True, weight=gene.weight, in_node=new_gene_key,
                      out_node=gene.out, innovation=self.get_global_innovation())
 
         self.genes.append(gene1)
@@ -150,17 +184,18 @@ class Genome(object):
         if (neuron1 <= INPUT_SIZE and neuron2 <= INPUT_SIZE) or neuron1 == neuron2:
             return
 
-        if neuron2 <= INPUT_SIZE or neuron1 > MAX_NODES:
+        if neuron1 > neuron2:
             temp = neuron1
             neuron1 = neuron2
             neuron2 = temp
 
-
+        if neuron2 <= INPUT_SIZE or neuron1 > MAX_NODES:
+            return
 
         if force_bias:
             neuron1 = INPUT_SIZE
 
-        new_gene = Gene(enabled=True, weight=uniform(-2.0,2.0), in_node=neuron1, out_node=neuron2)
+        new_gene = Gene(enabled=True, weight=uniform(-1.0,1.0), in_node=neuron1, out_node=neuron2)
 
         if self.contains_link(new_gene):
             return
@@ -170,29 +205,32 @@ class Genome(object):
         self.genes.append(new_gene)
 
     def mutate(self):
+        """
         for mutation, rate in self.mutation_rates.iteritems():
             if random() < 0.5:
                 self.mutation_rates[mutation] *= 0.95
             else:
                 self.mutation_rates[mutation] *= 1.05263
+        """
 
         for i in range(pcount(self.mutation_rates['connect'])):
             self.point_mutate()
 
         for i in range(pcount(self.mutation_rates['link'])):
-            self.link_mutate(force_bias=False)
-
-        for i in range(pcount(self.mutation_rates['bias'])):
-            self.link_mutate(force_bias=True)
+            if random() < BIAS_MUTATION_CHANCE:
+                force_bias = True
+            else:
+                force_bias = False
+            self.link_mutate(force_bias=force_bias)
 
         for i in range(pcount(self.mutation_rates['node'])):
             self.node_mutate()
 
-        for i in range(pcount(self.mutation_rates['enable'])):
-            self.enable_disable_mutate(enable=True)
-
         for i in range(pcount(self.mutation_rates['disable'])):
             self.enable_disable_mutate(enable=False)
+
+        for i in range(pcount(self.mutation_rates['enable'])):
+            self.enable_disable_mutate(enable=True)
 
     def disjoint(self, genome_b):
         innovation_map = {}
@@ -205,7 +243,7 @@ class Genome(object):
                 total_common += 1
 
         total_disjoint = len(self.genes) + len(genome_b.genes) - 2 * total_common
-        n = max(len(self.genes), len(genome_b.genes))
+        n = 1.0
 
         return total_disjoint*1.0/n
 
@@ -225,7 +263,7 @@ class Genome(object):
 
     def same_species(self, genome_b):
         dd = DELTA_DISJOINT * self.disjoint(genome_b=genome_b)
-        dw = DELTA_WEIGHT * self.disjoint(genome_b=genome_b)
+        dw = DELTA_WEIGHT * self.diff_weights(genome_b=genome_b)
         return dd + dw < DELTA_THRESHOLD
 
     def evaluate_fitness(self):
@@ -234,52 +272,15 @@ class Genome(object):
         total = 0
         for i in range(2):
             for j in range(2):
-                for k in range(2):
-                    for l in range(2):
-                        output = network.evaluate([i, j, k, l, 1])
-                        total += abs(output[0] - (i ^ j ^ k ^ l))
+                output = network.evaluate([i, j,  1.0])
+                total += abs((output[0] > 0.5) - (i ^ j))
 
-        result = (16-total)**2
+        result = (4 - total)**2
         self.fitness = result
         return result
 
-    def draw(self):
-        G = nx.Graph()
-
-        nodes_added = {}
-        labels = {}
-
-        io_pos = {}
-        for i in range(1, INPUT_SIZE+1):
-            io_pos[i] = (-20,i)
-
-        for i in range(1, OUTPUT_SIZE+1):
-            io_pos[MAX_NODES + i] = (10, i)
-
-        for gene in self.genes:
-            into = gene.into
-            out = gene.out
-            if into not in nodes_added:
-                nodes_added[into] = True
-                G.add_node(into)
-                labels[into] = into
-            if out not in nodes_added:
-                nodes_added[out] = True
-                G.add_node(out)
-                labels[out] = out
-
-            if gene.enabled:
-                G.add_edge(into, out, color='green')
-            else:
-                G.add_edge(into, out, color='red')
-
-        pos = nx.spring_layout(G, pos=io_pos, fixed=io_pos.keys())
-
-        colors = [G[u][v]['color'] for u, v in G.edges()]
-        nx.draw_networkx_nodes(G, pos, with_labels = False, node_color='b')
-        nx.draw_networkx_edges(G, pos, edge_color=colors)
-        nx.draw_networkx_labels(G, pos, labels, font_color='w')
-        plt.show(block = True)
+    def network(self):
+        return Network(self)
 
 class Gene(object):
     def __init__(self, enabled=False, weight=0.0, in_node=0, out_node=0, innovation = 0):
